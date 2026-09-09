@@ -1,0 +1,16 @@
+dist/
+.vscode/
+vendor/
+pkg/
+.idea
+test/data
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.glide/
+.idea/
+*.iml
+coverage.txt
