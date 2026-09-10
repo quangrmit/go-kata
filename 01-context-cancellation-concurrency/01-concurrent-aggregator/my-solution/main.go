@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -52,7 +53,21 @@ type UserAggregator struct {
 func (ua *UserAggregator) Aggregate(context context.Context, id int) error {
 	co := make(chan Order)
 	os := &OrderService{}
+
+	cp := make(chan Profile)
+	ps := &ProfileService{}
+
 	eg := new(errgroup.Group)
+
+	eg.Go(func() error {
+
+		err := ps.GetProfile(cp)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
 	eg.Go(func() error {
 
 		err := os.GetOrders(co)
@@ -64,7 +79,9 @@ func (ua *UserAggregator) Aggregate(context context.Context, id int) error {
 
 	select {
 	case <-co:
-		log.Println("received co")
+		log.Println("received Order channel")
+	case <-cp:
+		log.Println("received Profile channel")
 	case <-context.Done():
 		log.Fatal("context deadline exceeded")
 		return errors.New("context deadline exceeded")
@@ -83,13 +100,14 @@ type OrderService struct {
 
 func (os *OrderService) GetOrders(oc chan Order) error {
 	log.Println("beginning of GetOrders")
-
-	if shouldErr() {
-		return errors.New("fake error")
-	}
-
-	time.Sleep(6 * time.Second)
-
+	//
+	// if shouldErr() {
+	// 	return errors.New("mock orders error")
+	// }
+	//
+	// time.Sleep(6 * time.Second)
+	//
+	fmt.Println("get orders checkpoint")
 	oc <- Order{Orders: 5}
 	return nil
 }
@@ -100,6 +118,13 @@ type Profile struct {
 	Name string
 }
 
-func (ps *ProfileService) GetProfile() Profile {
-	return Profile{Name: "Alice"}
+func (ps *ProfileService) GetProfile(pc chan Profile) error {
+	log.Println("beginning of GetProfile")
+	// if shouldErr() {
+	// 	return errors.New("mock profile error")
+	// }
+	// time.Sleep(6 * time.Second)
+	pc <- Profile{Name: "Alice"}
+	fmt.Println("checkpoint getprofile")
+	return nil
 }
