@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -33,15 +33,36 @@ func main() {
 
 			therefore, we need to use 2 channels for the 2 services
 
+			okay now what is the problem in the current piece of code. the select stmt only runs once, so it can only evaluate 1 service's channel at a time. There fore, I think we need to apply the fan-in function, which combines 2 channels into 1.
+
 	*/
 	ua := &UserAggregator{}
 	parentCtx := context.Background()
 	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
 	defer cancel()
 
-	err := ua.Aggregate(ctx, 1)
-	if err != nil {
-		log.Fatal(err)
+	info := Info{}
+	ci := make(chan Info)
+	errCh := make(chan error, 1)
+
+	go func() {
+
+		err := ua.Aggregate(ctx, ci, 1)
+		if err != nil {
+			log.Fatal(err)
+		}
+		errCh <- err
+
+	}()
+
+	select {
+	case info = <-ci:
+		log.Println("received Info channel")
+		log.Println(info)
+	case <-errCh:
+		log.Fatal("error with aggregate function")
+	case <-ctx.Done():
+		log.Fatal("context deadline exceeded")
 	}
 	log.Println("the end")
 }
@@ -49,28 +70,33 @@ func main() {
 type UserAggregator struct {
 }
 
-func (ua *UserAggregator) Aggregate(context context.Context, id int) error {
-	co := make(chan Order)
+func (ua *UserAggregator) Aggregate(context context.Context, ci chan Info, id int) error {
+	var order = &Order{}
 	os := &OrderService{}
+
+	var profile = &Profile{}
+	ps := &ProfileService{}
+
 	eg := new(errgroup.Group)
+
 	eg.Go(func() error {
 
-		err := os.GetOrders(co)
-		if err != nil {
-			return err
-		}
+		profile = ps.GetProfile()
 		return nil
 	})
 
-	select {
-	case <-co:
-		log.Println("received co")
-	case <-context.Done():
-		log.Fatal("context deadline exceeded")
-		return errors.New("context deadline exceeded")
-	}
+	eg.Go(func() error {
+
+		order = os.GetOrders()
+		return nil
+	})
+
 	if err := eg.Wait(); err != nil {
 		log.Fatal(err)
+	}
+	ci <- Info{
+		profile: *profile,
+		order:   *order,
 	}
 	return nil
 }
@@ -81,17 +107,17 @@ type Order struct {
 type OrderService struct {
 }
 
-func (os *OrderService) GetOrders(oc chan Order) error {
+func (os *OrderService) GetOrders() *Order {
 	log.Println("beginning of GetOrders")
-
-	if shouldErr() {
-		return errors.New("fake error")
-	}
-
-	time.Sleep(6 * time.Second)
-
-	oc <- Order{Orders: 5}
-	return nil
+	//
+	// if shouldErr() {
+	// 	return errors.New("mock orders error")
+	// }
+	//
+	// time.Sleep(6 * time.Second)
+	//
+	fmt.Println("get orders checkpoint")
+	return &Order{Orders: 5}
 }
 
 type ProfileService struct {
@@ -100,6 +126,16 @@ type Profile struct {
 	Name string
 }
 
-func (ps *ProfileService) GetProfile() Profile {
-	return Profile{Name: "Alice"}
+func (ps *ProfileService) GetProfile() *Profile {
+	log.Println("beginning of GetProfile")
+	// if shouldErr() {
+	// 	return errors.New("mock profile error")
+	// }
+	// time.Sleep(6 * time.Second)
+	return &Profile{Name: "Alice"}
+}
+
+type Info struct {
+	profile Profile
+	order   Order
 }
