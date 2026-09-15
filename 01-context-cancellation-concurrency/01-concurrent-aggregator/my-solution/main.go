@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -10,8 +11,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const GLOBAL_TIMEOUT = 1
+const SERVICE_1_TIMEOUT = 10
+const SERVICE_2_TIMEOUT = 0
+
 func shouldErr() bool {
 	num := rand.Intn(11) // set error rate to be 30%
+	fmt.Printf("num is %v ", num)
 	return num <= 3
 
 }
@@ -38,67 +44,56 @@ func main() {
 	*/
 	ua := &UserAggregator{}
 	parentCtx := context.Background()
-	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(parentCtx, 1*time.Second)
 	defer cancel()
 
-	info := Info{}
-	ci := make(chan Info)
-	errCh := make(chan error, 1)
-
-	go func() {
-
-		err := ua.Aggregate(ctx, ci, 1)
-		if err != nil {
-			log.Fatal(err)
-		}
-		errCh <- err
-
-	}()
-
-	select {
-	case info = <-ci:
-		log.Println("received Info channel")
-		log.Println(info)
-	case <-errCh:
-		log.Fatal("error with aggregate function")
-	case <-ctx.Done():
-		log.Fatal("context deadline exceeded")
+	info, err := ua.Aggregate(ctx, 1)
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	log.Println(info)
 	log.Println("the end")
 }
 
 type UserAggregator struct {
 }
 
-func (ua *UserAggregator) Aggregate(context context.Context, ci chan Info, id int) error {
+func (ua *UserAggregator) Aggregate(ctx context.Context, id int) (Info, error) {
 	var order = &Order{}
 	os := &OrderService{}
 
 	var profile = &Profile{}
 	ps := &ProfileService{}
 
-	eg := new(errgroup.Group)
+	eg, _ := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
-
-		profile = ps.GetProfile()
+		var err error
+		profile, err = ps.GetProfile(ctx)
+		if err != nil {
+			log.Println("err check in goroutine")
+			return err
+		}
 		return nil
 	})
 
 	eg.Go(func() error {
-
-		order = os.GetOrders()
+		var err error
+		order, err = os.GetOrders(ctx)
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 
 	if err := eg.Wait(); err != nil {
 		log.Fatal(err)
 	}
-	ci <- Info{
+	return Info{
 		profile: *profile,
 		order:   *order,
-	}
-	return nil
+	}, nil
 }
 
 type Order struct {
@@ -107,17 +102,21 @@ type Order struct {
 type OrderService struct {
 }
 
-func (os *OrderService) GetOrders() *Order {
+func (os *OrderService) GetOrders(ctx context.Context) (*Order, error) {
 	log.Println("beginning of GetOrders")
-	//
+
 	// if shouldErr() {
-	// 	return errors.New("mock orders error")
+	// 	return nil, errors.New("mock orders error")
 	// }
 	//
-	// time.Sleep(6 * time.Second)
 	//
-	fmt.Println("get orders checkpoint")
-	return &Order{Orders: 5}
+	select {
+	case <-time.After(SERVICE_1_TIMEOUT * time.Second):
+		fmt.Println("get orders checkpoint")
+		return &Order{Orders: 5}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 type ProfileService struct {
@@ -126,13 +125,23 @@ type Profile struct {
 	Name string
 }
 
-func (ps *ProfileService) GetProfile() *Profile {
+func (ps *ProfileService) GetProfile(ctx context.Context) (*Profile, error) {
 	log.Println("beginning of GetProfile")
-	// if shouldErr() {
-	// 	return errors.New("mock profile error")
+	// if true {
+	// 	log.Println("error in get profile")
+	// 	return nil, errors.New("mock profile error")
 	// }
 	// time.Sleep(6 * time.Second)
-	return &Profile{Name: "Alice"}
+	select {
+	case <-time.After(time.Duration(SERVICE_2_TIMEOUT) * time.Second):
+		if true {
+			return nil, errors.New("mock profile error")
+		}
+		return &Profile{Name: "Alice"}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+
+	}
 }
 
 type Info struct {
